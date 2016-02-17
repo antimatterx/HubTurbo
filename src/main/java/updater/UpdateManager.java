@@ -7,11 +7,16 @@ import org.apache.logging.log4j.Logger;
 import ui.UI;
 import ui.UpdateProgressWindow;
 import util.DialogMessage;
-import util.Utility;
+import prefs.Preferences;
+import prefs.UpdateConfig;
+import util.JsonFileConverter;
+import util.Version;
 
 import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URL;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -29,19 +34,23 @@ public class UpdateManager {
 
     // Directories and file names
     private static final String UPDATE_DIRECTORY = "updates";
+    // TODO change to release version on merging with master
     private static final String UPDATE_SERVER_DATA_NAME =
-            "https://raw.githubusercontent.com/HubTurbo/AutoUpdater/master/HubTurbo.xml";
-    private static final String UPDATE_LOCAL_DATA_NAME = "HubTurbo.json";
-    private static final String UPDATE_APP_NAME = "HubTurbo.jar";
+            "https://raw.githubusercontent.com/HubTurbo/HubTurbo/1271-updater-data/HubTurboUpdate.json";
+    private static final String UPDATE_LOCAL_DATA_NAME = UPDATE_DIRECTORY + File.separator + "HubTurbo.json";
+    private static final String UPDATE_APP_NAME = UPDATE_DIRECTORY + File.separator + "HubTurbo.jar";
+    public static final String UPDATE_CONFIG_FILENAME = "updateConfig.json";
     private static final String UPDATE_JAR_UPDATER_APP_PATH = UPDATE_DIRECTORY + File.separator + "jarUpdater.jar";
 
     // Class member variables
+    private UpdateConfig updateConfig;
     private final UpdateProgressWindow updateProgressWindow;
     private final UI ui;
 
     public UpdateManager(UI ui, UpdateProgressWindow updateProgressWindow) {
         this.ui = ui;
         this.updateProgressWindow = updateProgressWindow;
+        loadUpdateConfig();
     }
 
     /**
@@ -69,18 +78,24 @@ public class UpdateManager {
             return;
         }
 
-        // TODO check if there is a new update since last update
-        // - if there isn't, check if any update has not been applied
-        // - if there is, download update according to user preference, i.e. auto or prompted
+        // Checks if there is a new update since last update
+        Optional<UpdateDownloadLink> updateDownloadLink = getLatestUpdateDownloadLinkForCurrentVersion();
 
+        if (!updateDownloadLink.isPresent() ||
+            !checkIfNewVersionAvailableToDownload(updateDownloadLink.get().getVersion())) {
+            return;
+        }
 
-        if (!downloadUpdateForApplication()) {
+        if (!downloadUpdateForApplication(updateDownloadLink.get().getApplicationFileLocation())) {
             logger.error(ERROR_DOWNLOAD_UPDATE_APP);
             return;
         }
 
+        markAppUpdateDownloadSuccess(updateDownloadLink.get().getVersion());
+
         // Prompt user for restarting application to apply update
         promptUserToApplyUpdateImmediately();
+
     }
 
     /**
@@ -96,6 +111,9 @@ public class UpdateManager {
             logger.error("Failed to create update directories");
             return false;
         }
+
+        updateConfig.setLastUpdateDownloadStatus(false);
+        saveUpdateConfig();
 
         return extractJarUpdater();
     }
@@ -132,7 +150,7 @@ public class UpdateManager {
         try {
             FileDownloader fileDownloader = new FileDownloader(
                     new URI(UPDATE_SERVER_DATA_NAME),
-                    new File(UPDATE_DIRECTORY + File.separator + UPDATE_LOCAL_DATA_NAME),
+                    new File(UPDATE_LOCAL_DATA_NAME),
                     a -> {});
             return fileDownloader.download();
         } catch (URISyntaxException e) {
@@ -146,15 +164,12 @@ public class UpdateManager {
      *
      * @return true if download successful, false otherwise
      */
-    private boolean downloadUpdateForApplication() {
+    private boolean downloadUpdateForApplication(URL downloadURL) {
         logger.info("Downloading update for application");
-
         URI downloadUri;
 
-        // TODO replace download source to use updater data
         try {
-            downloadUri = new URI(
-                    "https://github.com/HubTurbo/HubTurbo/releases/download/V3.18.0/resource-v3.18.0.jar");
+            downloadUri = downloadURL.toURI();
         } catch (URISyntaxException e) {
             logger.error("Download URI is not correct", e);
             return false;
@@ -165,13 +180,68 @@ public class UpdateManager {
 
         FileDownloader fileDownloader = new FileDownloader(
                 downloadUri,
-                new File(UPDATE_DIRECTORY + File.separator + UPDATE_APP_NAME),
+                new File(UPDATE_APP_NAME),
                 downloadProgressBar::setProgress);
         boolean result = fileDownloader.download();
 
         updateProgressWindow.removeDownloadProgressBar(downloadUri);
 
         return result;
+    }
+
+    /**
+     * Checks if a given version is a new version that can be downloaded.
+     * If that version was previously downloaded (even if newer than current), we will not download it again.
+     *
+     * Scenario: on V0.0.0, V1.0.0 was downloaded. However, user is still using V0.0.0 and there is no newer update
+     *           than V1.0.0. HT won't download V1.0.0 again because the fact that user is still in V0.0.0 means he
+     *           does not want to use V0.0.0 (either V1.0.0 is broken or due to other reasons).
+     *
+     * @param version version to be checked if it is an update
+     * @return true if the given version can be downloaded, false otherwise
+     */
+    private boolean checkIfNewVersionAvailableToDownload(Version version) {
+        return Version.getCurrentVersion().compareTo(version) < 0 &&
+                !updateConfig.checkIfVersionWasPreviouslyDownloaded(version);
+    }
+
+    private Optional<UpdateDownloadLink> getLatestUpdateDownloadLinkForCurrentVersion() {
+        File updateDataFile = new File(UPDATE_LOCAL_DATA_NAME);
+        JsonFileConverter jsonUpdateDataConverter = new JsonFileConverter(updateDataFile);
+        UpdateData updateData = (UpdateData) jsonUpdateDataConverter.loadFromFile(UpdateData.class)
+                .orElse(new UpdateData());
+
+        return updateData.getLatestUpdateDownloadLinkForCurrentVersion();
+    }
+
+    private void markAppUpdateDownloadSuccess(Version versionDownloaded) {
+        updateConfig.setLastUpdateDownloadStatus(true);
+        updateConfig.addToVersionPreviouslyDownloaded(versionDownloaded);
+        saveUpdateConfig();
+    }
+
+    private void loadUpdateConfig() {
+        File updateConfigFile = new File(Preferences.DIRECTORY + File.separator + UPDATE_CONFIG_FILENAME);
+        JsonFileConverter jsonConverter = new JsonFileConverter(updateConfigFile);
+        this.updateConfig = (UpdateConfig) jsonConverter.loadFromFile(UpdateConfig.class).orElse(new UpdateConfig());
+    }
+
+    private void saveUpdateConfig() {
+        File updateConfigFile = new File(Preferences.DIRECTORY + File.separator + UPDATE_CONFIG_FILENAME);
+        JsonFileConverter jsonConverter = new JsonFileConverter(updateConfigFile);
+        jsonConverter.saveToFile(updateConfig);
+    }
+
+    /**
+     * Runs updating clean up on quitting HubTurbo
+     */
+    public void onAppQuit() {
+        if (updateConfig.getLastUpdateDownloadStatus()) {
+            updateConfig.setLastUpdateDownloadStatus(false);
+            saveUpdateConfig();
+
+            runJarUpdaterWithoutExecute();
+        }
     }
 
     public void showUpdateProgressWindow() {
@@ -184,6 +254,10 @@ public class UpdateManager {
 
     private boolean runJarUpdaterWithExecute() {
         return runJarUpdater(true);
+    }
+
+    private boolean runJarUpdaterWithoutExecute() {
+        return runJarUpdater(false);
     }
 
     private boolean runJarUpdater(boolean shouldExecuteJar) {

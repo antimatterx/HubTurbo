@@ -1,0 +1,12 @@
+{
+  "listOfLinks": [
+    {
+      "version": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+      },
+      "applicationFileLocation": "https://github.com/HubTurbo/HubTurbo/releases/download/V3.21.0/resource-v3.21.0.jar"
+    }
+  ]
+}
