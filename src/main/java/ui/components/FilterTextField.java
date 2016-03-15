@@ -55,12 +55,19 @@ public class FilterTextField extends TextField {
         validationSupport.registerValidator(this, (c, newValue) -> {
             boolean wasError = false;
             try {
-                Parser.parse(getText());
-                setStyleForValidFilter();
+                if (!Parser.check(getText())) {
+                    wasError = true;
+                }
             } catch (ParseException e) {
                 wasError = true;
-                setStyleForInvalidFilter();
             }
+
+            if (wasError) {
+                setStyleForInvalidFilter();
+            } else {
+                setStyleForValidFilter();
+            }
+
             return ValidationResult.fromErrorIf(this, "Parse error", wasError);
         });
         setOnKeyTyped(e -> {
