@@ -166,7 +166,7 @@ If the PR was from a contributor, merge it only after it is approved.
 #### Enable automatic updates
 
 - Update [HubTurboUpdate.json](https://raw.githubusercontent.com/HubTurbo/HubTurbo/master/HubTurboUpdate.json)
-  - If the release is a different major, create a new JSON object containing `version` and `applicationFileLocation`. This is to allow updating data store when there is an update in major version
+  - If the release is a different major, create a new JSON object containing `version` and `applicationFileLocation`. This is to allow updating data store when there is an update in major version.
 - Commit in the `VMAJOR.MINOR.PATCH` format
 
 ### Prepare next release candidate
